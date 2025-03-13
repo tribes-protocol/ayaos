@@ -1,5 +1,4 @@
 import { AgentcoinAPI } from '@/apis/agentcoinfun'
-import { BASE_RPC_URL } from '@/common/env'
 import { isNull } from '@/common/functions'
 import {
   AgentWallet,
@@ -68,7 +67,7 @@ export class WalletService extends Service implements IWalletService {
     const client: WalletClient = createWalletClient({
       account: this.getAccount(wallet),
       chain: base,
-      transport: http(BASE_RPC_URL)
+      transport: http(process.env.BASE_RPC_URL)
     })
 
     const txHash = await client.sendTransaction({

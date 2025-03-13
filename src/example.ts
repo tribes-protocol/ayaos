@@ -21,7 +21,7 @@ async function main(): Promise<void> {
     await agent.start()
     console.log('agent started', agent.agentId)
   } catch (error) {
-    console.error(`error: ${error}`, error)
+    console.error(`error: ${error}`)
     process.exit(1)
   }
 }

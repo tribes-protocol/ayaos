@@ -2,12 +2,14 @@ import { AGENTCOIN_FUN_API_URL } from '@/common/env'
 import { serializeIdentity, toJsonTree } from '@/common/functions'
 import {
   AgentEventData,
-  AgentProvisionResponse,
-  AgentProvisionResponseSchema,
   AgentWallet,
   AgentWalletKind,
   AgentWalletSchema,
+  Character,
+  CharacterSchema,
   ChatStatusBody,
+  CliAuthRequestSchema,
+  CliAuthResponseSchema,
   CreateMessage,
   ErrorResponseSchema,
   HydratedMessage,
@@ -114,7 +116,7 @@ export class AgentcoinAPI {
     signupToken: string,
     signature: string,
     publicKey: string
-  ): Promise<AgentProvisionResponse> {
+  ): Promise<Character> {
     const response = await fetch(`${AGENTCOIN_FUN_API_URL}/api/agents/provision`, {
       method: 'POST',
       headers: {
@@ -129,7 +131,7 @@ export class AgentcoinAPI {
       throw new Error('Failed to provision agent coin')
     }
 
-    return AgentProvisionResponseSchema.parse(data)
+    return CharacterSchema.parse(data)
   }
 
   async generateAuthMessage(publicKey: string): Promise<string> {
@@ -218,5 +220,66 @@ export class AgentcoinAPI {
     const responseData = await response.json()
     const knowledges = KnowledgeSchema.array().parse(responseData)
     return knowledges
+  }
+
+  async createAgentFromCli(
+    message: string,
+    publicKey: string,
+    signature: string,
+    cookie: string
+  ): Promise<Character> {
+    const response = await fetch(`${AGENTCOIN_FUN_API_URL}/api/agents/create-from-cli`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({
+        message,
+        publicKey,
+        signature
+      })
+    })
+
+    if (response.status !== 200) {
+      throw new Error('Failed to create pure agent')
+    }
+
+    const responseData = await response.json()
+    return CharacterSchema.parse(responseData)
+  }
+
+  async createCliAuthRequest(): Promise<string> {
+    const response = await fetch(`${AGENTCOIN_FUN_API_URL}/api/cliauth/create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    })
+
+    if (response.status !== 200) {
+      throw new Error('Failed to create cli auth request')
+    }
+
+    const responseData = await response.json()
+    const { id } = CliAuthResponseSchema.parse(responseData)
+
+    return id
+  }
+
+  async getCliAuthRequest(id: string): Promise<string | undefined> {
+    const response = await fetch(`${AGENTCOIN_FUN_API_URL}/api/cliauth/get`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id })
+    })
+
+    if (response.status === 202) {
+      return undefined
+    }
+
+    if (response.status !== 200) {
+      throw new Error('Failed to get cli auth request')
+    }
+
+    const responseData = await response.json()
+    const { token } = CliAuthRequestSchema.parse(responseData)
+
+    return token
   }
 }

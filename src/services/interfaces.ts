@@ -27,7 +27,7 @@ export interface IAgentcoinService {
 }
 
 export interface IConfigService {
-  checkEnvAndCharacterUpdate(): Promise<void>
+  checkCharacterUpdate(): Promise<void>
 }
 
 export interface IKnowledgeBaseService {

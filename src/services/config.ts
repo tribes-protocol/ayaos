@@ -1,12 +1,7 @@
-import {
-  AGENTCOIN_MONITORING_ENABLED,
-  CHARACTER_FILE,
-  CODE_DIR,
-  ENV_FILE,
-  RUNTIME_SERVER_SOCKET_FILE
-} from '@/common/constants'
+import { AGENTCOIN_MONITORING_ENABLED } from '@/common/env'
 import { isNull, isRequiredString } from '@/common/functions'
 import { OperationQueue } from '@/common/lang/operation_queue'
+import { PathResolver } from '@/common/path-resolver'
 import { CharacterSchema, ServiceKind } from '@/common/types'
 import { EventService } from '@/services/event'
 import { IConfigService } from '@/services/interfaces'
@@ -33,7 +28,8 @@ export class ConfigService extends Service implements IConfigService {
 
   constructor(
     private readonly eventService: EventService,
-    private readonly processService: ProcessService
+    private readonly processService: ProcessService,
+    private readonly pathResolver: PathResolver
   ) {
     super()
   }
@@ -82,51 +78,22 @@ export class ConfigService extends Service implements IConfigService {
     })
 
     // Remove existing socket file if it exists
-    if (fs.existsSync(RUNTIME_SERVER_SOCKET_FILE)) {
-      fs.unlinkSync(RUNTIME_SERVER_SOCKET_FILE)
+    if (fs.existsSync(this.pathResolver.RUNTIME_SERVER_SOCKET_FILE)) {
+      fs.unlinkSync(this.pathResolver.RUNTIME_SERVER_SOCKET_FILE)
     }
 
-    this.server = app.listen(RUNTIME_SERVER_SOCKET_FILE)
+    this.server = app.listen(this.pathResolver.RUNTIME_SERVER_SOCKET_FILE)
 
     while (this.isRunning) {
-      await Promise.all([
-        this.checkCodeUpdate(),
-        this.checkEnvUpdate(),
-        this.checkCharacterUpdate()
-      ])
+      await Promise.all([this.checkCodeUpdate(), this.checkCharacterUpdate()])
       await new Promise((resolve) => setTimeout(resolve, 30000))
     }
   }
 
-  public async checkEnvAndCharacterUpdate(): Promise<void> {
-    await Promise.all([this.checkEnvUpdate(), this.checkCharacterUpdate()])
-  }
-
-  private async checkEnvUpdate(): Promise<void> {
-    await this.operationQueue.submit(async () => {
-      // read envvars file
-      const envvars = fs.readFileSync(ENV_FILE, 'utf8')
-      const checksum = crypto.createHash('md5').update(envvars).digest('hex')
-      if (isNull(this.envvarsChecksum) || this.envvarsChecksum === checksum) {
-        this.envvarsChecksum = checksum
-        return
-      }
-
-      // kill the process and docker container should restart it
-      elizaLogger.info(`New envvars file detected. Restarting agent...`)
-      await this.eventService.publishEnvChangeEvent(envvars)
-      this.envvarsChecksum = checksum
-
-      if (process.env.NODE_ENV === 'production') {
-        await this.processService.kill()
-      }
-    })
-  }
-
-  private async checkCharacterUpdate(): Promise<void> {
+  async checkCharacterUpdate(): Promise<void> {
     await this.operationQueue.submit(async () => {
       // read character file
-      const character = fs.readFileSync(CHARACTER_FILE, 'utf8')
+      const character = fs.readFileSync(this.pathResolver.CHARACTER_FILE, 'utf8')
       const checksum = crypto.createHash('md5').update(character).digest('hex')
       if (isNull(this.characterChecksum) || this.characterChecksum === checksum) {
         this.characterChecksum = checksum
@@ -136,7 +103,7 @@ export class ConfigService extends Service implements IConfigService {
       // kill the process and docker container should restart it
       elizaLogger.info(`New character file detected. Restarting agent...`)
       const characterObject = CharacterSchema.parse(
-        JSON.parse(fs.readFileSync(CHARACTER_FILE, 'utf8'))
+        JSON.parse(fs.readFileSync(this.pathResolver.CHARACTER_FILE, 'utf8'))
       )
       this.characterChecksum = checksum
       await this.eventService.publishCharacterChangeEvent(characterObject)
@@ -149,7 +116,7 @@ export class ConfigService extends Service implements IConfigService {
   private async checkCodeUpdate(): Promise<void> {
     await this.operationQueue.submit(async () => {
       try {
-        const git = simpleGit(CODE_DIR)
+        const git = simpleGit(this.pathResolver.CODE_DIR)
         const commitHash = (await git.revparse(['HEAD'])).trim()
         const remoteUrl = await git.remote(['get-url', 'origin'])
 
@@ -189,9 +156,9 @@ export class ConfigService extends Service implements IConfigService {
     if (this.server) {
       this.server.close()
       console.log('Closing server')
-      if (fs.existsSync(RUNTIME_SERVER_SOCKET_FILE)) {
+      if (fs.existsSync(this.pathResolver.RUNTIME_SERVER_SOCKET_FILE)) {
         console.log('Removing socket file')
-        fs.unlinkSync(RUNTIME_SERVER_SOCKET_FILE)
+        fs.unlinkSync(this.pathResolver.RUNTIME_SERVER_SOCKET_FILE)
       }
       this.server = undefined
     }

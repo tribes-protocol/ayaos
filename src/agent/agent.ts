@@ -2,9 +2,7 @@ import { IAyaAgent } from '@/agent/iagent'
 import { AgentcoinAPI } from '@/apis/agentcoinfun'
 import { initializeClients } from '@/clients'
 import { getTokenForProvider } from '@/common/config'
-import { CHARACTER_FILE } from '@/common/constants'
 import { initializeDatabase } from '@/common/db'
-import { ensureUUID } from '@/common/functions'
 import { AgentcoinRuntime } from '@/common/runtime'
 import { Context, ContextHandler, ModelConfig, SdkEventKind } from '@/common/types'
 import agentcoinPlugin from '@/plugins/agentcoin'
@@ -32,6 +30,10 @@ import {
 } from '@elizaos/core'
 import { bootstrapPlugin } from '@elizaos/plugin-bootstrap'
 import fs from 'fs'
+import { PathResolver } from '@/common/path-resolver'
+import { isNull } from '@/common/functions'
+
+const reservedAgentDirs = new Set<string>()
 
 export class Agent implements IAyaAgent {
   private modelConfig?: ModelConfig
@@ -45,9 +47,15 @@ export class Agent implements IAyaAgent {
   private plugins: Plugin[] = []
   private evaluators: Evaluator[] = []
   private runtime_: AgentcoinRuntime | undefined
+  private pathResolver: PathResolver
 
-  constructor(options?: { modelConfig?: ModelConfig }) {
+  constructor(options?: { modelConfig?: ModelConfig; dataDir?: string }) {
     this.modelConfig = options?.modelConfig
+    if (reservedAgentDirs.has(options?.dataDir)) {
+      throw new Error('Data directory already used. Please provide a unique data directory.')
+    }
+    reservedAgentDirs.add(options?.dataDir)
+    this.pathResolver = new PathResolver(options?.dataDir)
   }
 
   get runtime(): AgentcoinRuntime {
@@ -80,10 +88,19 @@ export class Agent implements IAyaAgent {
       elizaLogger.info('Starting agent...')
 
       // step 1: provision the hardware if needed.
-      const keychainService = new KeychainService()
+      const keychainService = new KeychainService(this.pathResolver.KEYPAIR_FILE)
       const agentcoinAPI = new AgentcoinAPI()
-      const agentcoinService = new AgentcoinService(keychainService, agentcoinAPI)
+      const agentcoinService = new AgentcoinService(
+        keychainService,
+        agentcoinAPI,
+        this.pathResolver
+      )
       await agentcoinService.provisionIfNeeded()
+
+      if (isNull(process.env.POSTGRES_URL)) {
+        elizaLogger.error('POSTGRES_URL is not set, please set it in your .env file')
+        process.exit(1)
+      }
 
       // eagerly start event service
       const agentcoinCookie = await agentcoinService.getCookie()
@@ -98,22 +115,18 @@ export class Agent implements IAyaAgent {
         keychainService.turnkeyApiKeyStamper
       )
       const processService = new ProcessService()
-      const configService = new ConfigService(eventService, processService)
+      const configService = new ConfigService(eventService, processService, this.pathResolver)
 
       // step 2: load character and initialize database
       elizaLogger.info('Loading character...')
       const [db, charString] = await Promise.all([
         initializeDatabase(),
-        fs.promises.readFile(CHARACTER_FILE, 'utf8')
+        fs.promises.readFile(this.pathResolver.CHARACTER_FILE, 'utf8')
       ])
 
-      const agentId = ensureUUID((await agentcoinService.getIdentity()).substring(6))
+      const character: Character = keychainService.processCharacterSecrets(JSON.parse(charString))
 
-      // configure character
-      const character: Character = JSON.parse(charString)
       const modelConfig = this.modelConfig
-
-      character.id = agentId
       character.templates = {
         ...character.templates,
         messageHandlerTemplate: AGENTCOIN_MESSAGE_HANDLER_TEMPLATE
@@ -149,7 +162,8 @@ export class Agent implements IAyaAgent {
           managers: [],
           cacheManager: cache,
           agentId: character.id
-        }
+        },
+        pathResolver: this.pathResolver
       })
       this.runtime_ = runtime
 
